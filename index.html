@@ -600,7 +600,7 @@
     <!-- BOTONES COMPARTIR -->
     <div class="compartir-titulo">Comparte o guarda tu plan</div>
     <div class="nota" style="margin-bottom:0.75rem;">
-      <strong>Importante:</strong> En esta versión sin backend, WhatsApp y correo se abren en la app del usuario con el plan ya preparado. El envío automático a Fitociencia® se realiza por Formspree.
+      <strong>Importante:</strong> En esta versión, el botón de correo envía tu evaluación al webhook configurado y luego puede abrir tu app de correo como respaldo. WhatsApp sigue abriéndose en la app del usuario con el plan preparado.
     </div>
 
     <a id="btn-wa" class="btn-wa" href="#" target="_blank">
@@ -612,6 +612,13 @@
       <svg class="email-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/><polyline points="22,6 12,12 2,6"/></svg>
       Enviarme por correo
     </a>
+
+    <div class="alerta-ok" id="alertaEmailOk">
+      Evaluación enviada correctamente al sistema de correo.
+    </div>
+    <div class="alerta-err" id="alertaEmailErr">
+      No se pudo enviar la evaluación al webhook. Revisa la configuración de Make e inténtalo de nuevo.
+    </div>
 
     <div class="divider"></div>
 
@@ -636,8 +643,8 @@ const STEPS = ['s1','s2','s3','s4','s5','s6'];
 const MAKE_WEBHOOK = 'https://hook.eu1.make.com/lytpo0jqfyo6qfn04ev77ah5kkd8rhw5';
 const CONFIG = {
   // Reemplaza este número con el WhatsApp oficial de Fitociencia en formato internacional, sin signo +
-  whatsappNumber: '+50230092176',
-  contactoEmail: 'athianjoshua@gmail.com'
+  whatsappNumber: '',
+  contactoEmail: 'fitociencialdo@gmail.com'
 };
 
 function buildWhatsAppLink(texto) {
@@ -779,32 +786,6 @@ ${planTxt}
 
 — Generado por Fitociencia® Guatemala`;
 
-  // Enviar a Formspree (a fitociencialdo@gmail.com)
-  let enviado = false;
-  try {
-    const resp = await fetch(MAKE_WEBHOOK, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
-      body: JSON.stringify({
-        _subject: `Nuevo cuestionario Fitociencia® — ${nombre}`,
-        paciente: nombre,
-        fecha, edad,
-        profesional: profe,
-        correo_paciente: correo,
-        puntaje_estres: `${pA}/12`,
-        puntaje_sueno: `${pB}/16`,
-        puntaje_muscular: `${pC}/12`,
-        puntaje_digestion: `${pD}/8`,
-        rec_estres: res.pA,
-        rec_sueno: res.pB,
-        rec_muscular: res.pC,
-        rec_digestion: res.pD,
-        plan_completo: planTxt,
-        mensaje_completo: mensaje
-      })
-    });
-    enviado = resp.ok;
-  } catch (e) { enviado = false; }
 
   // Construir links de compartir
   const txtWA = encodeURIComponent(`*Mi Plan Fitociencia®*\n\n*${nombre}*\n${fecha}\n\n*A — Estrés (${pA}/12):*\n${res.pA}\n\n*B — Sueño (${pB}/16):*\n${res.pB}\n\n*C — Muscular (${pC}/12):*\n${res.pC}\n\n*D — Digestión (${pD}/8):*\n${res.pD}\n\n*Mi plan:*\n${planTxt}\n\n_Fitociencia® Guatemala_`);
@@ -839,14 +820,87 @@ ${planTxt}
     lista.appendChild(d);
   });
 
-  document.getElementById(enviado ? 'alertaOk' : 'alertaErr').style.display = 'block';
+  document.getElementById('alertaOk').style.display = 'none';
+  document.getElementById('alertaErr').style.display = 'none';
   irA(6);
+  configurarBotonCorreo({
+    nombre, fecha, edad, profe, correo, pA, pB, pC, pD, res, planTxt, mensaje
+  });
+}
+
+
+function ocultarAlertasCorreo() {
+  ['alertaEmailOk','alertaEmailErr'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.style.display = 'none';
+  });
+}
+
+async function enviarWebhookCorreo(payload) {
+  const resp = await fetch(MAKE_WEBHOOK, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+    body: JSON.stringify({
+      _subject: `Nuevo cuestionario Fitociencia® — ${payload.nombre}`,
+      trigger_source: 'email_button',
+      paciente: payload.nombre,
+      fecha: payload.fecha,
+      edad: payload.edad,
+      profesional: payload.profe,
+      correo_paciente: payload.correo,
+      puntaje_estres: `${payload.pA}/12`,
+      puntaje_sueno: `${payload.pB}/16`,
+      puntaje_muscular: `${payload.pC}/12`,
+      puntaje_digestion: `${payload.pD}/8`,
+      rec_estres: payload.res.pA,
+      rec_sueno: payload.res.pB,
+      rec_muscular: payload.res.pC,
+      rec_digestion: payload.res.pD,
+      plan_completo: payload.planTxt,
+      mensaje_completo: payload.mensaje
+    })
+  });
+
+  if (!resp.ok) {
+    throw new Error(`Webhook respondió con estado ${resp.status}`);
+  }
+
+  return resp;
+}
+
+function configurarBotonCorreo(payload) {
+  const btn = document.getElementById('btn-email-pac');
+  if (!btn) return;
+
+  const asunto = `Mi Plan Fitociencia® — ${payload.nombre}`;
+  const mailtoLink = buildMailtoLink(payload.correo || CONFIG.contactoEmail, asunto, payload.mensaje);
+
+  btn.href = mailtoLink;
+  btn.target = '_self';
+  btn.onclick = async function(event) {
+    event.preventDefault();
+    ocultarAlertasCorreo();
+    btn.style.pointerEvents = 'none';
+    btn.style.opacity = '0.7';
+
+    try {
+      await enviarWebhookCorreo(payload);
+      document.getElementById('alertaEmailOk').style.display = 'block';
+      window.location.href = mailtoLink;
+    } catch (error) {
+      console.error(error);
+      document.getElementById('alertaEmailErr').style.display = 'block';
+    } finally {
+      btn.style.pointerEvents = 'auto';
+      btn.style.opacity = '1';
+    }
+  };
 }
 
 function reiniciar() {
   document.querySelectorAll('input[type="radio"]').forEach(r => r.checked = false);
   document.querySelectorAll('.opcion').forEach(o => o.classList.remove('sel'));
-  ['av2','av3','av4','alertaOk','alertaErr'].forEach(id => document.getElementById(id).style.display = 'none');
+  ['av2','av3','av4','alertaOk','alertaErr','alertaEmailOk','alertaEmailErr'].forEach(id => document.getElementById(id).style.display = 'none');
   ['nombre','fecha','edad','profe','correo-paciente'].forEach(id => document.getElementById(id).value = '');
   document.getElementById('btn-email-pac').href = '#';
   document.getElementById('btn-wa').href = '#';
